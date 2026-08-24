@@ -116,6 +116,14 @@ func toggleConfigAPIKeyExcludedAll(cfg *config.Config, auth *coreauth.Auth, disa
 			return true, nil
 		}
 	}
+	for i := range cfg.QwenKey {
+		entry := &cfg.QwenKey[i]
+		id, _ := idGen.Next("qwen:apikey", entry.APIKey, entry.BaseURL)
+		if id == authID {
+			entry.ExcludedModels = setConfigAPIKeyExcludedAll(entry.ExcludedModels, disable)
+			return true, nil
+		}
+	}
 	for i := range cfg.VertexCompatAPIKey {
 		entry := &cfg.VertexCompatAPIKey[i]
 		key := strings.TrimSpace(entry.APIKey)
