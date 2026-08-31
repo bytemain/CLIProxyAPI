@@ -1770,6 +1770,37 @@ func TestStreamChunkRequestBodyPolicyBySchemaVersion(t *testing.T) {
 	}
 }
 
+type omitHistoryRegisterClient struct{}
+
+func (omitHistoryRegisterClient) Call(_ context.Context, method string, _ []byte) ([]byte, error) {
+	if method != pluginabi.MethodPluginRegister {
+		return nil, fmt.Errorf("unexpected method %q", method)
+	}
+	return marshalRPCResult(rpcRegistration{
+		SchemaVersion: pluginabi.SchemaVersion,
+		Capabilities:  rpcCapabilities{StreamChunkInterceptor: true, StreamChunkOmitHistory: true},
+	})
+}
+
+func (omitHistoryRegisterClient) Shutdown() {}
+
+// TestRegisterRPCPluginParsesStreamChunkOmitHistory proves the registration JSON's
+// stream_chunk_omit_history flag propagates through the real RPC decode into
+// plugin.Capabilities.StreamChunkOmitHistory (not a hand-built Capabilities struct).
+// Removing the rpc_client.go assignment makes this RED.
+func TestRegisterRPCPluginParsesStreamChunkOmitHistory(t *testing.T) {
+	plugin, err := registerRPCPlugin(context.Background(), nil, "omit", omitHistoryRegisterClient{}, pluginabi.MethodPluginRegister, nil)
+	if err != nil {
+		t.Fatalf("registerRPCPlugin: %v", err)
+	}
+	if plugin.Capabilities.StreamChunkInterceptor == nil {
+		t.Fatal("StreamChunkInterceptor not wired from registration")
+	}
+	if !plugin.Capabilities.StreamChunkOmitHistory {
+		t.Fatal("StreamChunkOmitHistory=false: registration JSON capability did not propagate through the RPC decode (rpc_client parse missing)")
+	}
+}
+
 func TestStreamChunkHistoryPolicyByCapability(t *testing.T) {
 	var legacyGot, modernGot pluginapi.StreamChunkInterceptRequest
 	host := newHostWithRecords(

@@ -29,6 +29,8 @@ type handlerInterceptorTestHost struct {
 	completeRequest               func(context.Context, pluginapi.RequestCompletion)
 	// includeStreamChunkRequestBodies simulates legacy schema_version < 3 plugins.
 	includeStreamChunkRequestBodies bool
+	// omitStreamChunkHistory simulates a plugin that declared StreamChunkOmitHistory.
+	omitStreamChunkHistory bool
 }
 
 type handlerInterceptorNoStreamTestHost struct {
@@ -106,6 +108,16 @@ func (h *handlerInterceptorTestHost) StreamChunkPayloadIncludesRequestBody() boo
 		return false
 	}
 	return h.includeStreamChunkRequestBodies
+}
+
+// StreamChunkPayloadIncludesHistory implements streamChunkHistoryPolicy. Default true
+// (a legacy history consumer); set omitStreamChunkHistory to simulate a plugin that
+// declared StreamChunkOmitHistory so the handler stops accumulating the window.
+func (h *handlerInterceptorTestHost) StreamChunkPayloadIncludesHistory() bool {
+	if h == nil {
+		return false
+	}
+	return !h.omitStreamChunkHistory
 }
 
 type interceptorCaptureExecutor struct {
@@ -485,6 +497,76 @@ func TestHandlerLifecycleCompletesSuccessfulStreamOnce(t *testing.T) {
 	case duplicate := <-completions:
 		t.Fatalf("duplicate stream completion = %#v", duplicate)
 	default:
+	}
+}
+
+// TestExecuteStreamAccumulatesHistoryPerPolicy drives the real streaming handler and
+// asserts the history window is accumulated only while a consumer needs it: a legacy
+// interceptor sees the prior chunk as history on the second frame; an opt-out interceptor
+// (StreamChunkOmitHistory) sees none because the handler stops accumulating. Reverting
+// the append guard to ignore the history policy makes the opt-out case RED.
+func TestExecuteStreamAccumulatesHistoryPerPolicy(t *testing.T) {
+	run := func(t *testing.T, omit bool) [][][]byte {
+		t.Helper()
+		model := "handler-history-accum"
+		executor := &interceptorCaptureExecutor{
+			stream: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+				chunks := make(chan coreexecutor.StreamChunk, 2)
+				chunks <- coreexecutor.StreamChunk{Payload: []byte("aaa")}
+				chunks <- coreexecutor.StreamChunk{Payload: []byte("bbb")}
+				close(chunks)
+				return &coreexecutor.StreamResult{Chunks: chunks}, nil
+			},
+		}
+		handler := newInterceptorHandler(t, model, executor, &sdkconfig.SDKConfig{})
+		var mu sync.Mutex
+		var seen [][][]byte
+		handler.SetPluginHost(&handlerInterceptorTestHost{
+			omitStreamChunkHistory: omit,
+			interceptStreamChunk: func(_ context.Context, req pluginapi.StreamChunkInterceptRequest) pluginapi.StreamChunkInterceptResponse {
+				if req.ChunkIndex >= 0 { // payload chunks only; skip header-init (-1)
+					mu.Lock()
+					seen = append(seen, req.HistoryChunks)
+					mu.Unlock()
+				}
+				return pluginapi.StreamChunkInterceptResponse{Body: req.Body}
+			},
+		})
+		dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(context.Background(), "openai", model, []byte(`{"model":"`+model+`","stream":true}`), "")
+		for dataChan != nil || errChan != nil {
+			select {
+			case _, ok := <-dataChan:
+				if !ok {
+					dataChan = nil
+				}
+			case errMsg, ok := <-errChan:
+				if ok && errMsg != nil {
+					t.Fatalf("stream error = %#v", errMsg)
+				}
+				if !ok {
+					errChan = nil
+				}
+			}
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return seen
+	}
+
+	legacy := run(t, false)
+	if len(legacy) < 2 {
+		t.Fatalf("legacy: expected >=2 payload interceptions, got %d", len(legacy))
+	}
+	if len(legacy[1]) != 1 || string(legacy[1][0]) != "aaa" {
+		t.Fatalf("legacy second-chunk history = %#v, want [\"aaa\"] — handler must accumulate for a history consumer", legacy[1])
+	}
+
+	omit := run(t, true)
+	if len(omit) < 2 {
+		t.Fatalf("opt-out: expected >=2 payload interceptions, got %d", len(omit))
+	}
+	if len(omit[1]) != 0 {
+		t.Fatalf("opt-out second-chunk history = %#v, want empty — handler must suppress accumulation when every consumer opted out", omit[1])
 	}
 }
 
