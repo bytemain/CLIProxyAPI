@@ -199,6 +199,15 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 	case "devin":
 		models = registry.GetDevinModels()
 		models = applyExcludedModels(models, excluded)
+	case "perplexity":
+		kind := "cookie"
+		if a.Attributes != nil && strings.TrimSpace(a.Attributes["api_key"]) != "" {
+			kind = "api_key"
+		} else if v, ok := a.Metadata["api_key"].(string); ok && strings.TrimSpace(v) != "" {
+			kind = "api_key"
+		}
+		models = registry.GetPerplexityModels(kind)
+		models = applyExcludedModels(models, excluded)
 	case "meta":
 		models = registry.GetMetaModels()
 		if entry := resolveConfigMetaKeyForConfig(cfg, a); entry != nil {

@@ -105,6 +105,7 @@ retain the corresponding business operation's fields.
 | `/credentials/fields` | PATCH | Change credential fields. |
 | `/credentials/refresh` | POST | Refresh credentials. |
 | `/oauth/import?provider=vertex` | POST | Import a Vertex service account using a multipart `file` upload. |
+| `/oauth/import?provider=perplexity` | POST | Import a Perplexity web session cookie or `pplx-` API key from JSON `{"credential": "..."}`. See [perplexity.md](perplexity.md). |
 | `/oauth/auth-url?provider=<provider>` | GET | Start built-in or plugin OAuth. |
 | `/oauth/siwc/bind` | POST | Start SIWC binding to an existing file-backed Codex OAuth credential. |
 | `/oauth/status?state=<state>` | GET | Get login status. |
