@@ -54,9 +54,14 @@ func TestPerplexityExecuteOpenAI(t *testing.T) {
 	ctx := perplexityTestContext(t, &sent)
 	exec := NewPerplexityExecutor(&config.Config{})
 	payload := `{"model":"pplx-claude-sonnet-4.6-thinking","messages":[{"role":"system","content":"Be brief"},{"role":"user","content":"hi"},{"role":"assistant","content":"yo"},{"role":"user","content":[{"type":"text","text":"latest go?"}]}]}`
-	resp, err := exec.Execute(ctx, perplexityTestAuth(), cliproxyexecutor.Request{Model: "pplx-claude-sonnet-4.6-thinking", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI})
+	auth := perplexityTestAuth()
+	auth.Metadata["citations"] = true
+	resp, err := exec.Execute(ctx, auth, cliproxyexecutor.Request{Model: "pplx-claude-sonnet-4.6-thinking", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
+	}
+	if !gjson.GetBytes(sent, "params.is_incognito").Bool() {
+		t.Fatalf("queries must be incognito by default: %s", sent)
 	}
 	if got := gjson.GetBytes(sent, "params.model_preference").String(); got != "claude46sonnetthinking" {
 		t.Fatalf("model_preference = %q", got)
@@ -79,7 +84,7 @@ func TestPerplexityExecuteStreamClaude(t *testing.T) {
 	ctx := perplexityTestContext(t, &sent)
 	exec := NewPerplexityExecutor(&config.Config{})
 	auth := perplexityTestAuth()
-	auth.Metadata["citations"] = false
+	auth.Metadata["incognito"] = false
 	payload := `{"model":"pplx-auto","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	result, err := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{Model: "pplx-auto", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, Stream: true})
 	if err != nil {
@@ -93,6 +98,12 @@ func TestPerplexityExecuteStreamClaude(t *testing.T) {
 		all.Write(chunk.Payload)
 	}
 	out := all.String()
+	if gjson.GetBytes(sent, "params.is_incognito").Bool() {
+		t.Fatalf("incognito metadata override ignored: %s", sent)
+	}
+	if strings.Contains(out, "Sources:") {
+		t.Fatalf("sources footer must be off by default:\n%s", out)
+	}
 	if gjson.GetBytes(sent, "query_str").String() != "hi" || gjson.GetBytes(sent, "params.mode").String() != "concise" {
 		t.Fatalf("unexpected upstream payload: %s", sent)
 	}
@@ -148,5 +159,52 @@ func TestPerplexityExecuteStreamResponses(t *testing.T) {
 	}
 	if !strings.Contains(all.String(), "response.completed") || !strings.Contains(all.String(), "Hello") {
 		t.Fatalf("unexpected responses stream:\n%s", all.String())
+	}
+}
+
+func TestPerplexityExecuteClaudeNonStreamThinkingFirst(t *testing.T) {
+	var sent []byte
+	ctx := perplexityTestContext(t, &sent)
+	exec := NewPerplexityExecutor(&config.Config{})
+	payload := `{"model":"pplx-gpt-5.5-thinking","max_tokens":100,"messages":[{"role":"user","content":"q"}]}`
+	resp, err := exec.Execute(ctx, perplexityTestAuth(), cliproxyexecutor.Request{Model: "pplx-gpt-5.5-thinking", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if gjson.GetBytes(resp.Payload, "content.0.type").String() != "thinking" || gjson.GetBytes(resp.Payload, "content.1.type").String() != "text" {
+		t.Fatalf("thinking block must precede text: %s", resp.Payload)
+	}
+}
+
+func TestPerplexityRefreshDoesNotMutateLiveAuth(t *testing.T) {
+	transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		h := http.Header{}
+		h.Add("Set-Cookie", "__Secure-next-auth.session-token=rotated; Path=/; HttpOnly")
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(`{"user":{"email":"a@b.c"},"expires":"2026-12-01T00:00:00Z"}`)), Request: req}, nil
+	})
+	ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", http.RoundTripper(transport))
+	auth := perplexityTestAuth()
+	updated, err := NewPerplexityExecutor(&config.Config{}).Refresh(ctx, auth)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if updated == auth {
+		t.Fatal("refresh must return a clone")
+	}
+	if got := auth.Metadata["cookies"].(map[string]any)["__Secure-next-auth.session-token"]; got != "tok" {
+		t.Fatalf("live auth mutated: %v", got)
+	}
+	if got := updated.Metadata["cookies"].(map[string]string)["__Secure-next-auth.session-token"]; got != "rotated" {
+		t.Fatalf("rotated cookie not persisted: %v", got)
+	}
+	if _, ok := auth.Metadata["expired"]; ok {
+		t.Fatal("live auth metadata gained keys")
+	}
+}
+
+func TestPerplexityOpenWebNilAuth(t *testing.T) {
+	_, err := NewPerplexityExecutor(&config.Config{}).Execute(context.Background(), nil, cliproxyexecutor.Request{Model: "pplx-auto", Payload: []byte(`{"messages":[{"role":"user","content":"x"}]}`)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI})
+	if err == nil {
+		t.Fatal("expected error for nil auth")
 	}
 }

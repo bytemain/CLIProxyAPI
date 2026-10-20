@@ -104,23 +104,26 @@ func (e *PerplexityExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Aut
 	if err != nil {
 		return nil, err
 	}
-	if auth.Metadata == nil {
-		auth.Metadata = map[string]any{}
+	// Never mutate the live auth: concurrent requests read its metadata.
+	updated := auth.Clone()
+	if updated.Metadata == nil {
+		updated.Metadata = map[string]any{}
 	}
-	auth.Metadata["cookies"] = merged
-	auth.Metadata["type"] = perplexityauth.Provider
-	auth.Metadata["auth_kind"] = perplexityauth.KindCookie
-	delete(auth.Metadata, "cookie")
-	delete(auth.Metadata, "session_token")
+	updated.Metadata["cookies"] = merged
+	updated.Metadata["type"] = perplexityauth.Provider
+	updated.Metadata["auth_kind"] = perplexityauth.KindCookie
+	delete(updated.Metadata, "cookie")
+	delete(updated.Metadata, "session_token")
 	if info.Expires != "" {
-		auth.Metadata["expired"] = info.Expires
+		updated.Metadata["expired"] = info.Expires
 	}
 	if info.User != nil && info.User.Email != "" {
-		auth.Metadata["email"] = info.User.Email
+		updated.Metadata["email"] = info.User.Email
 	}
-	auth.Metadata["last_refresh"] = time.Now().Format(time.RFC3339)
-	auth.LastRefreshedAt = time.Now()
-	return auth, nil
+	now := time.Now()
+	updated.Metadata["last_refresh"] = now.Format(time.RFC3339)
+	updated.LastRefreshedAt = now
+	return updated, nil
 }
 
 // Execute performs a non-streaming request.
@@ -354,8 +357,15 @@ func (e *PerplexityExecutor) prepareWeb(ctx context.Context, auth *cliproxyauth.
 	}
 	language := helps.PerplexityMetaString(meta, "language", "en-US")
 	timezone := helps.PerplexityMetaString(meta, "timezone", "UTC")
-	incognito, _ := meta["incognito"].(bool)
-	citations := true
+	// Incognito by default: a shared credential must not write proxied
+	// queries into the owner's library or feed account memory and
+	// personalisation back into other users' answers.
+	incognito := true
+	if v, okIncognito := meta["incognito"].(bool); okIncognito {
+		incognito = v
+	}
+	// The Sources footer is opt-in; API/agent clients mostly treat it as noise.
+	citations := false
 	if v, okCitations := meta["citations"].(bool); okCitations {
 		citations = v
 	}
@@ -445,6 +455,9 @@ func (e *PerplexityExecutor) consumeWeb(ctx context.Context, httpResp *http.Resp
 }
 
 func (e *PerplexityExecutor) openWeb(ctx context.Context, auth *cliproxyauth.Auth, p *perplexityPrepared) (*http.Response, error) {
+	if auth == nil {
+		return nil, statusErr{code: http.StatusUnauthorized, msg: "perplexity: auth is nil"}
+	}
 	cookies := perplexityauth.CookiesFromMetadata(auth.Metadata)
 	if cookies[perplexityauth.SessionCookieName] == "" {
 		return nil, statusErr{code: http.StatusUnauthorized, msg: "perplexity: auth file has no session cookie"}
