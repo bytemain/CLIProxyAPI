@@ -16,25 +16,37 @@ type PerplexityWebModel struct {
 }
 
 // PerplexityWebModels lists the web (cookie) models. Preferences are taken from
-// the perplexity.ai web client; update when Perplexity rotates model IDs.
+// the perplexity.ai web client (/rest/models/config); update when Perplexity rotates model IDs.
 var PerplexityWebModels = []PerplexityWebModel{
 	{ID: "pplx-auto", Label: "Perplexity Best", Preference: "pplx_pro", Tier: "free"},
 	{ID: "pplx-sonar", Label: "Sonar", Preference: "experimental", Tier: "pro"},
+	{ID: "pplx-gpt-6.1-sol", Label: "GPT-6.1 Sol", Preference: "gpt6_1_sol", Thinking: "gpt6_1_sol_thinking", Tier: "max"},
+	{ID: "pplx-gpt-6-sol", Label: "GPT-6 Sol", Preference: "gpt6_sol", Thinking: "gpt6_sol_thinking", Tier: "max"},
+	{ID: "pplx-gpt-6-astra", Label: "GPT-6 Astra", Preference: "gpt6_astra", Thinking: "gpt6_astra_thinking", Tier: "pro"},
 	{ID: "pplx-gpt-5.6-terra", Label: "GPT-5.6 Terra", Preference: "gpt56_terra", Thinking: "gpt56_terra_thinking", Tier: "pro"},
 	{ID: "pplx-gpt-5.6-sol", Label: "GPT-5.6 Sol", Preference: "gpt56_sol", Thinking: "gpt56_sol_thinking", Tier: "max"},
 	{ID: "pplx-gpt-5.5", Label: "GPT-5.5", Preference: "gpt55", Thinking: "gpt55_thinking", Tier: "pro"},
 	{ID: "pplx-gpt-5-mini", Label: "GPT-5 Mini", Preference: "gpt5_mini", Tier: "pro"},
+	{ID: "pplx-gemini-4-argon", Label: "Gemini 4 Argon", Preference: "gemini4argon", Thinking: "gemini4argonthinking", Tier: "pro"},
+	{ID: "pplx-gemini-3.8-flash", Label: "Gemini 3.8 Flash", Preference: "gemini38flash", Thinking: "gemini38flashthinking", Tier: "pro"},
 	{ID: "pplx-gemini-3.1-pro", Label: "Gemini 3.1 Pro", Preference: "gemini31pro_high", Tier: "pro"},
 	{ID: "pplx-gemini-3.5-flash", Label: "Gemini 3.5 Flash", Preference: "gemini35flash", Tier: "pro"},
+	{ID: "pplx-claude-opus-5.5", Label: "Claude Opus 5.5", Preference: "claude55opus", Thinking: "claude55opusthinking", Tier: "max"},
+	{ID: "pplx-claude-fable-5.1", Label: "Claude Fable 5.1", Preference: "claudefable51", Thinking: "claudefable51thinking", Tier: "max"},
+	{ID: "pplx-claude-sonnet-5.5", Label: "Claude Sonnet 5.5", Preference: "claude55sonnet", Thinking: "claude55sonnetthinking", Tier: "pro"},
+	{ID: "pplx-claude-haiku-5.5", Label: "Claude Haiku 5.5", Preference: "claude55haiku", Thinking: "claude55haikuthinking", Tier: "pro"},
 	{ID: "pplx-claude-sonnet-5", Label: "Claude Sonnet 5", Preference: "claude50sonnet", Thinking: "claude50sonnetthinking", Tier: "pro"},
 	{ID: "pplx-claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Preference: "claude46sonnet", Thinking: "claude46sonnetthinking", Tier: "pro"},
 	{ID: "pplx-claude-opus-4.8", Label: "Claude Opus 4.8", Preference: "claude48opus", Thinking: "claude48opusthinking", Tier: "max"},
 	{ID: "pplx-claude-opus-4.7", Label: "Claude Opus 4.7", Preference: "claude47opus", Thinking: "claude47opusthinking", Tier: "max"},
-	{ID: "pplx-grok-4.6", Label: "Grok 4.6", Preference: "grok46low", Tier: "pro"},
+	{ID: "pplx-grok-4.7", Label: "Grok 4.7", Preference: "grok47", Thinking: "grok47thinking", Tier: "pro"},
+	{ID: "pplx-grok-4.6", Label: "Grok 4.6", Preference: "grok46low", Thinking: "grok46medium", Tier: "pro"},
 	{ID: "pplx-grok-4.5", Label: "Grok 4.5", Preference: "grok45low", Thinking: "grok45medium", Tier: "pro"},
-	{ID: "pplx-kimi-k3", Label: "Kimi K3", Preference: "kimik3", Tier: "pro"},
+	{ID: "pplx-kimi-k3", Label: "Kimi K3", Preference: "kimik3", Thinking: "kimik3thinking", Tier: "pro"},
 	{ID: "pplx-kimi-k2.6", Label: "Kimi K2.6", Preference: "kimik26instant", Thinking: "kimik26thinking", Tier: "pro"},
+	{ID: "pplx-glm-5.3", Label: "GLM-5.3", Preference: "glm_5_3_thinking", Tier: "pro"},
 	{ID: "pplx-glm-5.2", Label: "GLM-5.2", Preference: "glm_5_2", Tier: "pro"},
+	{ID: "pplx-nemotron-3.5-super", Label: "Nemotron 3.5 Super VL", Preference: "nv_nemotron_3_5_super", Tier: "pro"},
 	{ID: "pplx-nemotron-3-ultra", Label: "Nemotron 3 Ultra", Preference: "nv_nemotron_3_ultra", Tier: "pro"},
 }
 
