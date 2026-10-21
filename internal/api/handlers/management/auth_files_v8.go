@@ -42,6 +42,8 @@ func (h *Handler) ImportOAuthV8(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "provider is required"})
 	case "vertex":
 		h.ImportVertexCredential(c)
+	case "perplexity":
+		h.ImportPerplexityCredential(c)
 	default:
 		c.JSON(http.StatusNotFound, gin.H{"error": "provider_not_found"})
 	}

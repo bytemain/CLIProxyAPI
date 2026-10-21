@@ -229,6 +229,10 @@ func MaskSensitiveHeaderValue(key, value string) string {
 	switch {
 	case strings.Contains(lowerKey, "authorization"):
 		return MaskAuthorizationHeader(value)
+	case lowerKey == "cookie":
+		return MaskCookieHeader(value)
+	case lowerKey == "set-cookie":
+		return MaskSetCookieHeader(value)
 	case strings.Contains(lowerKey, "api-key"),
 		strings.Contains(lowerKey, "apikey"),
 		strings.Contains(lowerKey, "token"),
@@ -237,6 +241,46 @@ func MaskSensitiveHeaderValue(key, value string) string {
 	default:
 		return value
 	}
+}
+
+// MaskCookieHeader masks every cookie value in a Cookie request header while
+// keeping cookie names, e.g. "a=1234...wxyz; b=12...yz".
+func MaskCookieHeader(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return value
+	}
+	parts := strings.Split(value, ";")
+	for i, part := range parts {
+		name, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			parts[i] = strings.TrimSpace(part)
+			continue
+		}
+		parts[i] = name + "=" + maskCookieValue(val)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// MaskSetCookieHeader masks the cookie value of a Set-Cookie response header
+// and keeps its attributes (Path, Expires, ...) readable.
+func MaskSetCookieHeader(value string) string {
+	first, attrs, hasAttrs := strings.Cut(value, ";")
+	name, val, ok := strings.Cut(strings.TrimSpace(first), "=")
+	if !ok {
+		return value
+	}
+	masked := name + "=" + maskCookieValue(val)
+	if hasAttrs {
+		masked += ";" + attrs
+	}
+	return masked
+}
+
+func maskCookieValue(v string) string {
+	if len(v) <= 4 {
+		return strings.Repeat("*", len(v))
+	}
+	return HideAPIKey(v)
 }
 
 // MaskSensitiveQuery masks sensitive query parameters, e.g. auth_token, within the raw query string.

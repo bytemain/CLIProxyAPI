@@ -409,7 +409,7 @@ func (f *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	if IsAnthropicUpstreamURL(req.URL) {
 		return f.anthropic.RoundTrip(req)
 	}
-	if req.URL.Scheme == "https" && strings.EqualFold(req.URL.Hostname(), "chatgpt.com") {
+	if req.URL.Scheme == "https" && (strings.EqualFold(req.URL.Hostname(), "chatgpt.com") || isPerplexityWebHost(req.URL.Hostname())) {
 		return f.chrome.RoundTrip(req)
 	}
 	return f.fallback.RoundTrip(req)
@@ -468,4 +468,11 @@ func NewUtlsHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyau
 		client.Timeout = timeout
 	}
 	return client
+}
+
+// isPerplexityWebHost reports whether host is the Cloudflare-protected
+// perplexity.ai web origin, which requires a browser TLS fingerprint.
+func isPerplexityWebHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "perplexity.ai" || host == "www.perplexity.ai"
 }

@@ -854,6 +854,17 @@ func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, origina
 		finishReason = choice.Get("finish_reason").String()
 
 		if message := choice.Get("message"); message.Exists() {
+			// Claude clients expect thinking blocks before the answer, so
+			// message-level reasoning (reasoning_content etc.) is emitted first.
+			for _, reasoningText := range collectOpenAIObjectReasoningTexts(message) {
+				if reasoningText == "" {
+					continue
+				}
+				block := []byte(`{"type":"thinking","thinking":""}`)
+				block, _ = sjson.SetBytes(block, "thinking", reasoningText)
+				blocks = append(blocks, block)
+			}
+
 			if contentResult := message.Get("content"); contentResult.Exists() {
 				if contentResult.IsArray() {
 					var textBuilder strings.Builder
@@ -932,15 +943,6 @@ func ConvertOpenAIResponseToClaudeNonStream(_ context.Context, _ string, origina
 						blocks = append(blocks, block)
 					}
 				}
-			}
-
-			for _, reasoningText := range collectOpenAIObjectReasoningTexts(message) {
-				if reasoningText == "" {
-					continue
-				}
-				block := []byte(`{"type":"thinking","thinking":""}`)
-				block, _ = sjson.SetBytes(block, "thinking", reasoningText)
-				blocks = append(blocks, block)
 			}
 
 			if toolCalls := message.Get("tool_calls"); toolCalls.Exists() && toolCalls.IsArray() {
