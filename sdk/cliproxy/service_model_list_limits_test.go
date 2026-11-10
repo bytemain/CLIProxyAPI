@@ -77,6 +77,8 @@ func TestModelListLimitsAPIKeyConfigModels(t *testing.T) {
 	}
 }
 
+// Configuration cleanup keeps one entry per alias, so this input does not come
+// from a real config; it exercises the alias builder's merge directly.
 func TestModelListLimitsOAuthAliasPool(t *testing.T) {
 	models := applyOAuthModelAliasEntries([]config.OAuthModelAlias{
 		{Name: "list-limits-big", Alias: "list-limits-alias"},
@@ -107,5 +109,37 @@ func TestModelListLimitsOAuthSettingAfterMerge(t *testing.T) {
 	want := registry.ModelListLimits{ContextLength: 180000, MaxCompletionTokens: 64000}
 	if got := limits["list-limits-override"]; got != want {
 		t.Fatalf("override limits = %+v, want %+v", got, want)
+	}
+}
+
+// Configuration cleanup deduplicates OAuth aliases per channel and per auth,
+// so a reachable alias pool spans accounts: each maps the alias to a
+// different upstream model.
+func TestModelListLimitsOAuthAliasAcrossAccounts(t *testing.T) {
+	cfg := &config.Config{
+		OAuthModelAlias: map[string][]config.OAuthModelAlias{
+			"codex": {{Name: "list-limits-cross-big", Alias: "list-limits-cross"}},
+		},
+	}
+	first := applyOAuthModelAlias(cfg, "codex", "oauth", []*ModelInfo{
+		{ID: "list-limits-cross-big", ContextLength: 400000, MaxCompletionTokens: 128000},
+	})
+	second := applyOAuthModelAliasForAuth(&config.Config{}, "codex", "oauth", map[string]string{
+		"model_aliases": `[{"name":"list-limits-cross-small","alias":"list-limits-cross"}]`,
+	}, []*ModelInfo{
+		{ID: "list-limits-cross-small", ContextLength: 200000, MaxCompletionTokens: 64000},
+	})
+
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.RegisterClient("list-limits-cross-a", "codex", first)
+	modelRegistry.RegisterClient("list-limits-cross-b", "codex", second)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient("list-limits-cross-a")
+		modelRegistry.UnregisterClient("list-limits-cross-b")
+	})
+
+	want := registry.ModelListLimits{ContextLength: 200000, MaxCompletionTokens: 64000}
+	if got := modelRegistry.GetModelListLimits()["list-limits-cross"]; got != want {
+		t.Fatalf("cross-account alias limits = %+v, want %+v", got, want)
 	}
 }
