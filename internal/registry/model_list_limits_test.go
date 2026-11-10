@@ -106,3 +106,18 @@ func TestGetModelListLimitsCapsToAcceptedRange(t *testing.T) {
 		t.Fatalf("giant-context limits = %+v, want context capped at 10000000", got)
 	}
 }
+
+func TestGetModelListLimitsConflictingOutputFieldsTakeSmaller(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "custom", []*ModelInfo{
+		{ID: "max-larger", MaxCompletionTokens: 64000, OutputTokenLimit: 32000},
+		{ID: "output-larger", MaxCompletionTokens: 32000, OutputTokenLimit: 64000},
+	})
+
+	limits := r.GetModelListLimits()
+	for _, id := range []string{"max-larger", "output-larger"} {
+		if got := limits[id].MaxCompletionTokens; got != 32000 {
+			t.Fatalf("%s output = %d, want smaller declared value 32000", id, got)
+		}
+	}
+}
