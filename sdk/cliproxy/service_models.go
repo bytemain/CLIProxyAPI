@@ -709,7 +709,7 @@ func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix boo
 	}
 
 	out := make([]*ModelInfo, 0, len(models)*2)
-	seen := make(map[string]struct{}, len(models)*2)
+	seen := make(map[string]int, len(models)*2)
 
 	addModel := func(model *ModelInfo) {
 		if model == nil {
@@ -719,10 +719,11 @@ func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix boo
 		if id == "" {
 			return
 		}
-		if _, exists := seen[id]; exists {
+		if index, exists := seen[id]; exists {
+			out[index] = registry.MergeModelListLimits(out[index], model)
 			return
 		}
-		seen[id] = struct{}{}
+		seen[id] = len(out)
 		out = append(out, model)
 	}
 
@@ -916,7 +917,7 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType, metadataCha
 	}
 	now := time.Now().Unix()
 	out := make([]*ModelInfo, 0, len(models))
-	seen := make(map[string]struct{}, len(models))
+	seen := make(map[string]int, len(models))
 	for i := range models {
 		model := models[i]
 		name := strings.TrimSpace(model.GetName())
@@ -926,10 +927,11 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType, metadataCha
 		}
 		alias := info.ID
 		key := strings.ToLower(alias)
-		if _, exists := seen[key]; exists {
+		if index, exists := seen[key]; exists {
+			out[index] = registry.MergeModelListLimits(out[index], info)
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(out)
 		if model.GetThinking() != nil {
 			info.ExplicitThinking = true
 		}
@@ -1264,7 +1266,7 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 	}
 
 	out := make([]*ModelInfo, 0, len(models))
-	seen := make(map[string]struct{}, len(models))
+	seen := make(map[string]int, len(models))
 	for _, model := range models {
 		if model == nil {
 			continue
@@ -1276,10 +1278,11 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 		key := strings.ToLower(id)
 		entries := forward[key]
 		if len(entries) == 0 {
-			if _, exists := seen[key]; exists {
+			if index, exists := seen[key]; exists {
+				out[index] = registry.MergeModelListLimits(out[index], model)
 				continue
 			}
-			seen[key] = struct{}{}
+			seen[key] = len(out)
 			out = append(out, model)
 			continue
 		}
@@ -1292,8 +1295,10 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 			}
 		}
 		if keepOriginal {
-			if _, exists := seen[key]; !exists {
-				seen[key] = struct{}{}
+			if index, exists := seen[key]; exists {
+				out[index] = registry.MergeModelListLimits(out[index], model)
+			} else {
+				seen[key] = len(out)
 				out = append(out, model)
 			}
 		}
@@ -1308,10 +1313,11 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 				continue
 			}
 			aliasKey := strings.ToLower(mappedID)
-			if _, exists := seen[aliasKey]; exists {
+			if index, exists := seen[aliasKey]; exists {
+				out[index] = registry.MergeModelListLimits(out[index], model)
 				continue
 			}
-			seen[aliasKey] = struct{}{}
+			seen[aliasKey] = len(out)
 			clone := cloneModelInfoForCatalogRoute(model)
 			clone.ID = mappedID
 			if model.MetadataModelID != "" {
@@ -1332,10 +1338,11 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 		}
 
 		if !keepOriginal && !addedAlias {
-			if _, exists := seen[key]; exists {
+			if index, exists := seen[key]; exists {
+				out[index] = registry.MergeModelListLimits(out[index], model)
 				continue
 			}
-			seen[key] = struct{}{}
+			seen[key] = len(out)
 			out = append(out, model)
 		}
 	}
@@ -1382,7 +1389,7 @@ func applyOAuthSettingEntries(settings []config.OAuthModelSetting, models []*Mod
 			clone := *model
 			clone.ContextLength = setting.MaxContextLength
 			clone.MaxContextLength = setting.MaxContextLength
-			out = append(out, &clone)
+			out = append(out, registry.WithListContextLength(&clone, setting.MaxContextLength))
 		} else {
 			out = append(out, model)
 		}
