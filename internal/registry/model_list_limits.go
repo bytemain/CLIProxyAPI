@@ -21,8 +21,9 @@ const (
 
 // modelListLimits returns the limits one model entry declares for the model
 // list. ListLimits wins when set; otherwise a configured max-context-length
-// override replaces the catalog context length, and a Gemini-style
-// OutputTokenLimit stands in for a missing MaxCompletionTokens.
+// override replaces the catalog context length. The output limit is the
+// smaller of MaxCompletionTokens and a Gemini-style OutputTokenLimit when
+// both are declared, or whichever one is.
 // InputTokenLimit is not used: it bounds the input alone, not the context
 // window shared by input and output.
 func modelListLimits(info *ModelInfo) ModelListLimits {
@@ -33,7 +34,7 @@ func modelListLimits(info *ModelInfo) ModelListLimits {
 		return *info.ListLimits
 	}
 	limits := ModelListLimits{ContextLength: info.ContextLength, MaxCompletionTokens: info.MaxCompletionTokens}
-	if limits.MaxCompletionTokens <= 0 {
+	if info.OutputTokenLimit > 0 && (limits.MaxCompletionTokens <= 0 || info.OutputTokenLimit < limits.MaxCompletionTokens) {
 		limits.MaxCompletionTokens = info.OutputTokenLimit
 	}
 	if info.MaxContextLength > 0 {
