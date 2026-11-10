@@ -76,6 +76,11 @@ type ModelInfo struct {
 	MaxContextLength int `json:"-"`
 	// MaxCompletionTokens is the maximum completion tokens
 	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
+	// ListLimits, when set, replaces the limits derived from ContextLength,
+	// MaxContextLength and MaxCompletionTokens in the OpenAI model list. It is
+	// set when one client routes this ID to several upstream models and holds
+	// the most conservative limits across them.
+	ListLimits *ModelListLimits `json:"-"`
 	// SupportedParameters lists supported parameters
 	SupportedParameters []string `json:"supported_parameters,omitempty"`
 	// SupportedInputModalities lists supported input modalities (e.g., TEXT, IMAGE, VIDEO, AUDIO)
@@ -522,7 +527,8 @@ func (r *ModelRegistry) registerClientLocked(clientID, clientProvider string, mo
 		}
 		rawModelIDs = append(rawModelIDs, model.ID)
 		newCounts[model.ID]++
-		if _, exists := newModels[model.ID]; exists {
+		if kept, exists := newModels[model.ID]; exists {
+			newModels[model.ID] = MergeModelListLimits(kept, model)
 			continue
 		}
 		newModels[model.ID] = model
@@ -861,6 +867,10 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 			copyThinking.Levels = append([]string(nil), model.Thinking.Levels...)
 		}
 		copyModel.Thinking = &copyThinking
+	}
+	if model.ListLimits != nil {
+		copyLimits := *model.ListLimits
+		copyModel.ListLimits = &copyLimits
 	}
 	if model.Config != nil {
 		copyConfig := *model.Config
