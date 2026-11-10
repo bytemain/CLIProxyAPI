@@ -10,9 +10,21 @@ type ModelListLimits struct {
 	MaxCompletionTokens int
 }
 
+// Clients that read these limits commonly reject implausible values (the Raft
+// gateway contract ignores a context window above 10,000,000 or an output
+// limit above 1,000,000 tokens). Larger declared limits are capped, which
+// still never advertises more than the model accepts.
+const (
+	maxListContextLength       = 10_000_000
+	maxListMaxCompletionTokens = 1_000_000
+)
+
 // modelListLimits returns the limits one model entry declares for the model
 // list. ListLimits wins when set; otherwise a configured max-context-length
-// override replaces the catalog context length.
+// override replaces the catalog context length, and a Gemini-style
+// OutputTokenLimit stands in for a missing MaxCompletionTokens.
+// InputTokenLimit is not used: it bounds the input alone, not the context
+// window shared by input and output.
 func modelListLimits(info *ModelInfo) ModelListLimits {
 	if info == nil {
 		return ModelListLimits{}
@@ -21,6 +33,9 @@ func modelListLimits(info *ModelInfo) ModelListLimits {
 		return *info.ListLimits
 	}
 	limits := ModelListLimits{ContextLength: info.ContextLength, MaxCompletionTokens: info.MaxCompletionTokens}
+	if limits.MaxCompletionTokens <= 0 {
+		limits.MaxCompletionTokens = info.OutputTokenLimit
+	}
 	if info.MaxContextLength > 0 {
 		limits.ContextLength = info.MaxContextLength
 	}
@@ -64,8 +79,9 @@ func WithListContextLength(info *ModelInfo, contextLength int) *ModelInfo {
 // A model ID can be served by several clients whose catalogs declare different
 // limits, so each limit is the smallest value declared across all of them. If
 // any client serving the ID does not declare a limit, that limit is reported
-// as unknown rather than taken from the clients that do. The output limit is
-// dropped when it exceeds the context length.
+// as unknown rather than taken from the clients that do. Limits above the
+// accepted range are capped, and the output limit is dropped when it exceeds
+// the context length.
 func (r *ModelRegistry) GetModelListLimits() map[string]ModelListLimits {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -106,6 +122,8 @@ func (r *ModelRegistry) GetModelListLimits() map[string]ModelListLimits {
 		if limits.MaxCompletionTokens <= 0 {
 			limits.MaxCompletionTokens = 0
 		}
+		limits.ContextLength = min(limits.ContextLength, maxListContextLength)
+		limits.MaxCompletionTokens = min(limits.MaxCompletionTokens, maxListMaxCompletionTokens)
 		if limits.ContextLength > 0 && limits.MaxCompletionTokens > limits.ContextLength {
 			limits.MaxCompletionTokens = 0
 		}

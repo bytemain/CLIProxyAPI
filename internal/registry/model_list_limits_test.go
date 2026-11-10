@@ -65,3 +65,44 @@ func TestGetModelListLimitsDropsOutputAboveContext(t *testing.T) {
 		t.Fatalf("odd limits = %+v, want output dropped", got)
 	}
 }
+
+func TestGetModelListLimitsUsesGeminiOutputTokenLimit(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "gemini", []*ModelInfo{{ID: "gemini-2.5-pro", InputTokenLimit: 1048576, OutputTokenLimit: 65536}})
+
+	if got := r.GetModelListLimits()["gemini-2.5-pro"]; got != (ModelListLimits{MaxCompletionTokens: 65536}) {
+		t.Fatalf("gemini limits = %+v, want output only (input limit is not a context window)", got)
+	}
+}
+
+func TestGetModelListLimitsMixedOutputFieldsAcrossClients(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-a", "gemini", []*ModelInfo{{ID: "mixed", OutputTokenLimit: 65536}})
+	r.RegisterClient("client-b", "antigravity", []*ModelInfo{{ID: "mixed", MaxCompletionTokens: 32000}})
+	r.RegisterClient("client-c", "antigravity", []*ModelInfo{{ID: "mixed-missing", MaxCompletionTokens: 32000}})
+	r.RegisterClient("client-d", "gemini", []*ModelInfo{{ID: "mixed-missing", InputTokenLimit: 1048576}})
+
+	limits := r.GetModelListLimits()
+	if got := limits["mixed"].MaxCompletionTokens; got != 32000 {
+		t.Fatalf("mixed output = %d, want 32000", got)
+	}
+	if got := limits["mixed-missing"].MaxCompletionTokens; got != 0 {
+		t.Fatalf("mixed-missing output = %d, want unknown", got)
+	}
+}
+
+func TestGetModelListLimitsCapsToAcceptedRange(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "antigravity", []*ModelInfo{
+		{ID: "huge", ContextLength: 1048576, MaxCompletionTokens: 1048576},
+		{ID: "giant-context", ContextLength: 20_000_000, MaxCompletionTokens: 128000},
+	})
+
+	limits := r.GetModelListLimits()
+	if got := limits["huge"]; got != (ModelListLimits{ContextLength: 1048576, MaxCompletionTokens: 1_000_000}) {
+		t.Fatalf("huge limits = %+v, want output capped at 1000000", got)
+	}
+	if got := limits["giant-context"]; got != (ModelListLimits{ContextLength: 10_000_000, MaxCompletionTokens: 128000}) {
+		t.Fatalf("giant-context limits = %+v, want context capped at 10000000", got)
+	}
+}
