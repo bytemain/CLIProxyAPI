@@ -437,12 +437,13 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 			hotReloadLogs = append(hotReloadLogs, hotReloadFields)
 		}
 		record := capabilityRecord{
-			id:       file.ID,
-			path:     file.Path,
-			version:  file.Version,
-			priority: item.Priority,
-			meta:     plugin.Metadata,
-			plugin:   plugin,
+			id:          file.ID,
+			path:        file.Path,
+			version:     file.Version,
+			priority:    item.Priority,
+			meta:        plugin.Metadata,
+			plugin:      plugin,
+			observeOnly: item.ObserveOnly,
 		}
 		h.updateActivePluginRecord(record)
 		readyUsagePluginIDs = append(readyUsagePluginIDs, file.ID)
@@ -1266,12 +1267,13 @@ func (h *Host) rollbackReplacement(lp *loadedPlugin, item runtimeItemConfig) (ca
 		return capabilityRecord{}, pluginFile{}, false
 	}
 	record := capabilityRecord{
-		id:       lp.id,
-		path:     lp.path,
-		version:  lp.version,
-		priority: item.Priority,
-		meta:     plugin.Metadata,
-		plugin:   plugin,
+		id:          lp.id,
+		path:        lp.path,
+		version:     lp.version,
+		priority:    item.Priority,
+		meta:        plugin.Metadata,
+		plugin:      plugin,
+		observeOnly: item.ObserveOnly,
 	}
 	h.updateActivePluginRecord(record)
 	return record, pluginFile{

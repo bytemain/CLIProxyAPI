@@ -37,6 +37,8 @@ type PluginsConfig struct {
 	StoreAuth []sdkpluginstore.AuthConfig `yaml:"store-auth,omitempty" json:"store-auth,omitempty"`
 	// AuthRevision changes when Home-managed plugin credentials change.
 	AuthRevision int64 `yaml:"auth-revision,omitempty" json:"auth-revision,omitempty"`
+	// ObserveOnlyInterceptors names plugins whose interceptor modifications are ignored.
+	ObserveOnlyInterceptors []string `yaml:"observe-only-interceptors,omitempty" json:"observe-only-interceptors,omitempty"`
 	// Configs stores per-plugin instance configuration by plugin ID.
 	Configs map[string]PluginInstanceConfig `yaml:"configs" json:"configs"`
 }

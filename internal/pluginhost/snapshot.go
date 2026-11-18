@@ -10,12 +10,13 @@ import (
 )
 
 type capabilityRecord struct {
-	id       string
-	path     string
-	version  string
-	priority int
-	meta     pluginapi.Metadata
-	plugin   pluginapi.Plugin
+	id          string
+	path        string
+	version     string
+	priority    int
+	meta        pluginapi.Metadata
+	plugin      pluginapi.Plugin
+	observeOnly bool
 }
 
 type Snapshot struct {

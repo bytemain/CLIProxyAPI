@@ -58,6 +58,12 @@ plugins:
 
 See `request-lifecycle/README.md` for build instructions and lifecycle semantics.
 
+## Observer-only Interceptors
+
+`plugins.observe-only-interceptors` is an optional, default-empty list of plugin IDs. For a listed plugin, the host invokes request, response and stream interceptors but discards their returned modifications, including request termination, header and body edits, and stream drops. The host copies callback buffers, headers and JSON-like metadata, and hides context values from these callbacks and from the plugin's completion and WebSocket-observer callbacks. Synchronous callbacks retain cancellation and deadlines. Unsupported metadata values are omitted, so the plugin may receive less information.
+
+Only list a plugin when losing all its interceptor modifications is intentional. Other capabilities remain available. Plugins remain trusted in-process code, not sandboxed code: they can use host callbacks, globals, the filesystem or the network. The setting alone does not prove that arbitrary plugin code cannot change credentials or routing. Verify the exact plugin and its capture behavior before enabling it; a replacement under the same ID is not automatically verified.
+
 ## Host Auth Files Callback
 
 `host-callback-auth-files` declares the Management API capability and exposes a browser resource named `Host Auth Files`. The resource demonstrates `host.auth.list`, `host.auth.get` (physical JSON file), `host.auth.get_runtime`, and `host.auth.save`.
