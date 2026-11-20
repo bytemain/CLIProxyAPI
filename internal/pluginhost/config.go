@@ -19,11 +19,12 @@ type runtimeConfig struct {
 }
 
 type runtimeItemConfig struct {
-	ID         string
-	Enabled    bool
-	Priority   int
-	Version    string
-	ConfigYAML []byte
+	ID          string
+	Enabled     bool
+	Priority    int
+	Version     string
+	ConfigYAML  []byte
+	ObserveOnly bool
 }
 
 func runtimeConfigFromConfig(cfg *config.Config) (runtimeConfig, error) {
@@ -50,6 +51,10 @@ func runtimeConfigFromConfig(cfg *config.Config) (runtimeConfig, error) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	observers := make(map[string]struct{}, len(cfg.Plugins.ObserveOnlyInterceptors))
+	for _, id := range cfg.Plugins.ObserveOnlyInterceptors {
+		observers[strings.TrimSpace(id)] = struct{}{}
+	}
 
 	for _, id := range ids {
 		item := cfg.Plugins.Configs[id]
@@ -57,13 +62,15 @@ func runtimeConfigFromConfig(cfg *config.Config) (runtimeConfig, error) {
 		if item.Enabled != nil {
 			enabled = *item.Enabled
 		}
+		_, observeOnly := observers[id]
 
 		out.Items[id] = runtimeItemConfig{
-			ID:         id,
-			Enabled:    enabled,
-			Priority:   item.Priority,
-			Version:    pluginConfigDesiredVersion(item),
-			ConfigYAML: runtimeConfigYAML(item, enabled),
+			ID:          id,
+			Enabled:     enabled,
+			Priority:    item.Priority,
+			Version:     pluginConfigDesiredVersion(item),
+			ConfigYAML:  runtimeConfigYAML(item, enabled),
+			ObserveOnly: observeOnly,
 		}
 	}
 	return out, nil

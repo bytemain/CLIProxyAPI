@@ -104,6 +104,16 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 
 		if id, ok := model["id"].(string); ok {
 			limit := limits[id]
+			if strings.HasSuffix(id, ")") && strings.LastIndex(id, "(") > 0 {
+				if h.HasUnverifiedModelRouting() || h.AuthManager == nil {
+					limit = registry.ModelListLimits{}
+				} else {
+					limit = h.AuthManager.ConservativeSuffixModelLimits(id, limit)
+					if h.HasUnverifiedModelRouting() {
+						limit = registry.ModelListLimits{}
+					}
+				}
+			}
 			if limit.ContextLength > 0 {
 				filteredModel["context_length"] = limit.ContextLength
 			}

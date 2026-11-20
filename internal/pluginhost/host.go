@@ -62,43 +62,44 @@ type pluginLoadResult struct {
 }
 
 type Host struct {
-	applyMu                    chan struct{}
-	mu                         sync.Mutex
-	loader                     pluginLoader
-	loaded                     map[string]*loadedPlugin
-	retired                    map[string][]*loadedPlugin
-	loading                    map[string]*pluginLoadRequest
-	fused                      map[string]string
-	pluginFileVersions         map[string]string
-	activePluginVersions       map[string]string
-	activePluginPaths          map[string]string
-	cleanupFilesPending        bool
-	runtimeConfig              *config.Config
-	authManager                *coreauth.Manager
-	modelExecutor              modelExecutor
-	modelClientIDs             map[string]struct{} // Reserved for future use; catalog-only plugins do not populate it.
-	executorModelClientIDs     map[string]struct{}
-	modelProviders             map[string]string
-	modelProviderSets          map[string][]string
-	authCredentialProviders    map[string]map[string]string
-	modelRegistrations         map[string]pluginModelRegistration
-	pluginModelRegistrations   map[string][]pluginModelRegistration
-	providerModels             map[string][]*registryModelInfo
-	staticAppendProviderModels map[string][]*registryModelInfo
-	executorProviders          map[string]struct{}
-	accessProviderKeys         map[string]struct{}
-	commandLineFlags           map[string]commandLineFlagRecord
-	commandLineHits            map[string]struct{}
-	managementRoutes           map[string]managementRouteRecord
-	resourceRoutes             map[string]resourceRouteRecord
-	streams                    *streamBridge
-	httpStreams                *hostHTTPStreamBridge
-	httpOperations             *hostHTTPOperationBridge
-	modelStreams               *modelStreamBridge
-	callbackContexts           *callbackContextRegistry
-	usageStates                map[string]*pluginUsageState
-	maxPendingUsageRecords     int
-	snapshot                   atomic.Value
+	applyMu                       chan struct{}
+	mu                            sync.Mutex
+	unconstrainedInterceptorCalls atomic.Int64
+	loader                        pluginLoader
+	loaded                        map[string]*loadedPlugin
+	retired                       map[string][]*loadedPlugin
+	loading                       map[string]*pluginLoadRequest
+	fused                         map[string]string
+	pluginFileVersions            map[string]string
+	activePluginVersions          map[string]string
+	activePluginPaths             map[string]string
+	cleanupFilesPending           bool
+	runtimeConfig                 *config.Config
+	authManager                   *coreauth.Manager
+	modelExecutor                 modelExecutor
+	modelClientIDs                map[string]struct{} // Reserved for future use; catalog-only plugins do not populate it.
+	executorModelClientIDs        map[string]struct{}
+	modelProviders                map[string]string
+	modelProviderSets             map[string][]string
+	authCredentialProviders       map[string]map[string]string
+	modelRegistrations            map[string]pluginModelRegistration
+	pluginModelRegistrations      map[string][]pluginModelRegistration
+	providerModels                map[string][]*registryModelInfo
+	staticAppendProviderModels    map[string][]*registryModelInfo
+	executorProviders             map[string]struct{}
+	accessProviderKeys            map[string]struct{}
+	commandLineFlags              map[string]commandLineFlagRecord
+	commandLineHits               map[string]struct{}
+	managementRoutes              map[string]managementRouteRecord
+	resourceRoutes                map[string]resourceRouteRecord
+	streams                       *streamBridge
+	httpStreams                   *hostHTTPStreamBridge
+	httpOperations                *hostHTTPOperationBridge
+	modelStreams                  *modelStreamBridge
+	callbackContexts              *callbackContextRegistry
+	usageStates                   map[string]*pluginUsageState
+	maxPendingUsageRecords        int
+	snapshot                      atomic.Value
 	// loadCleanupDoneHook, set by tests, runs after a late load cleanup dropped its load token.
 	loadCleanupDoneHook func()
 	// usageDrainWaitHook, set by tests, runs when beginUsageReplacement waits for admitted usage calls to drain.
@@ -437,12 +438,13 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 			hotReloadLogs = append(hotReloadLogs, hotReloadFields)
 		}
 		record := capabilityRecord{
-			id:       file.ID,
-			path:     file.Path,
-			version:  file.Version,
-			priority: item.Priority,
-			meta:     plugin.Metadata,
-			plugin:   plugin,
+			id:          file.ID,
+			path:        file.Path,
+			version:     file.Version,
+			priority:    item.Priority,
+			meta:        plugin.Metadata,
+			plugin:      plugin,
+			observeOnly: item.ObserveOnly,
 		}
 		h.updateActivePluginRecord(record)
 		readyUsagePluginIDs = append(readyUsagePluginIDs, file.ID)
@@ -1266,12 +1268,13 @@ func (h *Host) rollbackReplacement(lp *loadedPlugin, item runtimeItemConfig) (ca
 		return capabilityRecord{}, pluginFile{}, false
 	}
 	record := capabilityRecord{
-		id:       lp.id,
-		path:     lp.path,
-		version:  lp.version,
-		priority: item.Priority,
-		meta:     plugin.Metadata,
-		plugin:   plugin,
+		id:          lp.id,
+		path:        lp.path,
+		version:     lp.version,
+		priority:    item.Priority,
+		meta:        plugin.Metadata,
+		plugin:      plugin,
+		observeOnly: item.ObserveOnly,
 	}
 	h.updateActivePluginRecord(record)
 	return record, pluginFile{

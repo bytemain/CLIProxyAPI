@@ -43,6 +43,22 @@ func modelListLimits(info *ModelInfo) ModelListLimits {
 	return limits
 }
 
+func DeclaredModelListLimits(info *ModelInfo) ModelListLimits {
+	limits := modelListLimits(info)
+	if limits.ContextLength <= 0 {
+		limits.ContextLength = 0
+	}
+	if limits.MaxCompletionTokens <= 0 {
+		limits.MaxCompletionTokens = 0
+	}
+	limits.ContextLength = min(limits.ContextLength, maxListContextLength)
+	limits.MaxCompletionTokens = min(limits.MaxCompletionTokens, maxListMaxCompletionTokens)
+	if limits.ContextLength > 0 && limits.MaxCompletionTokens > limits.ContextLength {
+		limits.MaxCompletionTokens = 0
+	}
+	return limits
+}
+
 // MergeModelListLimits returns a copy of kept whose ListLimits also cover
 // dropped. Call it wherever two entries with the same model ID collapse into
 // one while both remain routable, so the model list cannot advertise more
@@ -116,21 +132,38 @@ func (r *ModelRegistry) GetModelListLimits() map[string]ModelListLimits {
 
 	out := make(map[string]ModelListLimits, len(acc))
 	for modelID, entry := range acc {
-		limits := *entry
-		if limits.ContextLength <= 0 {
-			limits.ContextLength = 0
-		}
-		if limits.MaxCompletionTokens <= 0 {
-			limits.MaxCompletionTokens = 0
-		}
-		limits.ContextLength = min(limits.ContextLength, maxListContextLength)
-		limits.MaxCompletionTokens = min(limits.MaxCompletionTokens, maxListMaxCompletionTokens)
-		if limits.ContextLength > 0 && limits.MaxCompletionTokens > limits.ContextLength {
-			limits.MaxCompletionTokens = 0
-		}
-		out[modelID] = limits
+		out[modelID] = DeclaredModelListLimits(&ModelInfo{ListLimits: entry})
 	}
-	return out
+	return includeBaseRouteLimits(out)
+}
+
+func includeBaseRouteLimits(limits map[string]ModelListLimits) map[string]ModelListLimits {
+	groups := make(map[string]ModelListLimits, len(limits))
+	for id, value := range limits {
+		key := listRouteGroup(id)
+		if previous, exists := groups[key]; exists {
+			value.ContextLength = minKnownLimit(value.ContextLength, previous.ContextLength)
+			value.MaxCompletionTokens = minKnownLimit(value.MaxCompletionTokens, previous.MaxCompletionTokens)
+		}
+		groups[key] = value
+	}
+	for id := range limits {
+		value := groups[listRouteGroup(id)]
+		limits[id] = DeclaredModelListLimits(&ModelInfo{ListLimits: &value})
+	}
+	return limits
+}
+
+func listRouteGroup(id string) string {
+	current := strings.TrimSpace(id)
+	for strings.HasSuffix(current, ")") {
+		open := strings.LastIndex(current, "(")
+		if open <= 0 {
+			break
+		}
+		current = strings.TrimSpace(current[:open])
+	}
+	return strings.ToLower(current)
 }
 
 // minKnownLimit returns the smaller of two limits, or 0 (unknown) when either

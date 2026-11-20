@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/MoeForge/moego/json"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -19,10 +20,46 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+type observerContext struct {
+	parent context.Context
+}
+
+func (observer observerContext) Deadline() (time.Time, bool) {
+	return observer.parent.Deadline()
+}
+
+func (observer observerContext) Done() <-chan struct{} {
+	return observer.parent.Done()
+}
+
+func (observer observerContext) Err() error {
+	return observer.parent.Err()
+}
+
+func (observer observerContext) Value(_ any) any {
+	return nil
+}
+
+func observerPluginContext(parent context.Context) context.Context {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return observerContext{parent: parent}
+}
+
+func (host *Host) trackedInterceptorContext(ctx context.Context, record capabilityRecord) (context.Context, func()) {
+	if record.observeOnly {
+		return observerPluginContext(ctx), func() {}
+	}
+	return withPluginCallFinish(ctx, func() { host.endInterceptorCall(record) })
+}
+
 func (h *Host) callRequestInterceptor(ctx context.Context, record capabilityRecord, method string, call func(context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error), req pluginapi.RequestInterceptRequest) (out pluginapi.RequestInterceptResponse, ok bool) {
-	if h == nil || call == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+	if h == nil || call == nil || !h.beginInterceptorCall(record) {
 		return pluginapi.RequestInterceptResponse{}, false
 	}
+	ctx, finishCall := h.trackedInterceptorContext(ctx, record)
+	defer finishCall()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.fusePlugin(record.id, method, recovered)
@@ -39,9 +76,11 @@ func (h *Host) callRequestInterceptor(ctx context.Context, record capabilityReco
 }
 
 func (h *Host) callRequestBodyPatcher(ctx context.Context, record capabilityRecord, method string, patcher pluginapi.RequestBodyPatcher, body []byte) (out pluginapi.RequestBodyPatchResponse, ok bool) {
-	if h == nil || patcher == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+	if h == nil || patcher == nil || !h.beginInterceptorCall(record) {
 		return pluginapi.RequestBodyPatchResponse{}, false
 	}
+	ctx, finishCall := h.trackedInterceptorContext(ctx, record)
+	defer finishCall()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.fusePlugin(record.id, method, recovered)
@@ -58,9 +97,11 @@ func (h *Host) callRequestBodyPatcher(ctx context.Context, record capabilityReco
 }
 
 func (h *Host) callResponseInterceptor(ctx context.Context, record capabilityRecord, interceptor pluginapi.ResponseInterceptor, req pluginapi.ResponseInterceptRequest) (out pluginapi.ResponseInterceptResponse, ok bool) {
-	if h == nil || interceptor == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+	if h == nil || interceptor == nil || !h.beginInterceptorCall(record) {
 		return pluginapi.ResponseInterceptResponse{}, false
 	}
+	ctx, finishCall := h.trackedInterceptorContext(ctx, record)
+	defer finishCall()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.fusePlugin(record.id, "ResponseInterceptor.InterceptResponse", recovered)
@@ -77,9 +118,11 @@ func (h *Host) callResponseInterceptor(ctx context.Context, record capabilityRec
 }
 
 func (h *Host) callStreamChunkInterceptor(ctx context.Context, record capabilityRecord, interceptor pluginapi.StreamChunkInterceptor, req pluginapi.StreamChunkInterceptRequest) (out pluginapi.StreamChunkInterceptResponse, ok bool) {
-	if h == nil || interceptor == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+	if h == nil || interceptor == nil || !h.beginInterceptorCall(record) {
 		return pluginapi.StreamChunkInterceptResponse{}, false
 	}
+	ctx, finishCall := h.trackedInterceptorContext(ctx, record)
+	defer finishCall()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.fusePlugin(record.id, "StreamChunkInterceptor.InterceptStreamChunk", recovered)
@@ -96,9 +139,11 @@ func (h *Host) callStreamChunkInterceptor(ctx context.Context, record capability
 }
 
 func (h *Host) callWebSocketResponseObserver(ctx context.Context, record capabilityRecord, observer pluginapi.WebSocketResponseObserver, event pluginapi.WebSocketResponseEvent) {
-	if h == nil || observer == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+	if h == nil || observer == nil || !h.beginInterceptorCall(record) {
 		return
 	}
+	ctx, finishCall := h.trackedInterceptorContext(ctx, record)
+	defer finishCall()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.fusePlugin(record.id, "WebSocketResponseObserver.ObserveWebSocketResponseEvent", recovered)
@@ -153,13 +198,20 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 		if patcher != nil {
 			if len(currentBase) > 0 {
 				patchInput := requestPatcherInputBody(patcher, currentBase)
-				if patchResp, ok := h.callRequestBodyPatcher(ctx, record, patchMethod, patcher, patchInput); ok && len(patchResp.Edits) > 0 {
+				if record.observeOnly {
+					patchInput = bytes.Clone(currentBase)
+				}
+				if patchResp, ok := h.callRequestBodyPatcher(ctx, record, patchMethod, patcher, patchInput); ok && !record.observeOnly && len(patchResp.Edits) > 0 {
 					patched, modified, errPatch := applyRequestBodyEdits(currentBase, patchResp.Edits)
 					if errPatch != nil {
 						log.Warnf("pluginhost: request body patcher %s returned invalid edits: %v", record.id, errPatch)
 					} else if modified {
-						currentBase = patched
-						bodyModified = true
+						h.mu.Lock()
+						if h.interceptorMutationAllowedLocked(record) {
+							currentBase = patched
+							bodyModified = true
+						}
+						h.mu.Unlock()
 					}
 				}
 			}
@@ -175,10 +227,17 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 			nextReq.Body = nil
 		} else if len(currentBase) > 0 {
 			nextReq.Body = requestInterceptorInputBody(interceptor, currentBase)
+			if record.observeOnly {
+				nextReq.Body = bytes.Clone(currentBase)
+			}
 		} else {
 			nextReq.Body = nil
 		}
-		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if record.observeOnly {
+			nextReq.Metadata = cloneObserverMetadata(req.Metadata)
+		} else {
+			nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		}
 		if nextReq.CallerScope == "" {
 			if scope, ok := nextReq.Metadata[coreexecutor.CallerScopeMetadataKey].(string); ok {
 				nextReq.CallerScope = strings.TrimSpace(scope)
@@ -198,6 +257,11 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 		if resp, ok := h.callRequestInterceptor(ctx, record, method, func(callCtx context.Context, callReq pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
 			return invoke(interceptor, callCtx, callReq)
 		}, nextReq); ok {
+			h.mu.Lock()
+			if !h.interceptorMutationAllowedLocked(record) {
+				h.mu.Unlock()
+				continue
+			}
 			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
 			if len(resp.ClearHeaders) > 0 {
 				current.ClearHeaders = append(current.ClearHeaders, resp.ClearHeaders...)
@@ -222,8 +286,10 @@ func (h *Host) interceptRequest(ctx context.Context, req pluginapi.RequestInterc
 				current.StatusCode = resp.StatusCode
 				current.ResponseHeaders = cloneHeader(resp.ResponseHeaders)
 				current.ResponseBody = bytes.Clone(resp.ResponseBody)
+				h.mu.Unlock()
 				break
 			}
+			h.mu.Unlock()
 		}
 	}
 	if len(current.ClearHeaders) > 0 && len(current.Headers) > 0 {
@@ -286,7 +352,11 @@ func (h *Host) ObserveWebSocketResponseEventExcept(ctx context.Context, event pl
 		}
 		next := event
 		next.Payload = bytes.Clone(event.Payload)
-		next.Metadata = cloneInterceptorMetadata(event.Metadata)
+		if record.observeOnly {
+			next.Metadata = cloneObserverMetadata(event.Metadata)
+		} else {
+			next.Metadata = cloneInterceptorMetadata(event.Metadata)
+		}
 		h.callWebSocketResponseObserver(ctx, record, observer, next)
 	}
 }
@@ -307,18 +377,27 @@ func (h *Host) CompleteRequestExcept(ctx context.Context, completion pluginapi.R
 		if h.isPluginFused(record.id) || plugin == nil || record.id == skipPluginID || !h.recordCurrent(record) {
 			continue
 		}
+		if !h.beginInterceptorCall(record) {
+			continue
+		}
 		next := completion
-		next.Metadata = cloneInterceptorMetadata(completion.Metadata)
-		go func(record capabilityRecord, plugin pluginapi.RequestLifecyclePlugin, completion pluginapi.RequestCompletion) {
+		nextContext, finishCall := h.trackedInterceptorContext(ctx, record)
+		if record.observeOnly {
+			next.Metadata = cloneObserverMetadata(completion.Metadata)
+		} else {
+			next.Metadata = cloneInterceptorMetadata(completion.Metadata)
+		}
+		go func(callContext context.Context, finishCall func(), record capabilityRecord, plugin pluginapi.RequestLifecyclePlugin, completion pluginapi.RequestCompletion) {
+			defer finishCall()
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					h.fusePlugin(record.id, "RequestLifecyclePlugin.HandleRequestComplete", recovered)
 				}
 			}()
-			if errComplete := plugin.HandleRequestComplete(ctx, completion); errComplete != nil {
+			if errComplete := plugin.HandleRequestComplete(callContext, completion); errComplete != nil {
 				log.Warnf("pluginhost: request lifecycle plugin %s failed: %v", record.id, errComplete)
 			}
-		}(record, plugin, next)
+		}(nextContext, finishCall, record, plugin, next)
 	}
 }
 
@@ -343,12 +422,22 @@ func (h *Host) InterceptResponseExcept(ctx context.Context, req pluginapi.Respon
 		nextReq.OriginalRequest = bytes.Clone(req.OriginalRequest)
 		nextReq.RequestBody = bytes.Clone(req.RequestBody)
 		nextReq.Body = bytes.Clone(current.Body)
-		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if record.observeOnly {
+			nextReq.Metadata = cloneObserverMetadata(req.Metadata)
+		} else {
+			nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		}
 		if resp, ok := h.callResponseInterceptor(ctx, record, interceptor, nextReq); ok {
+			h.mu.Lock()
+			if !h.interceptorMutationAllowedLocked(record) {
+				h.mu.Unlock()
+				continue
+			}
 			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
 			if len(resp.Body) > 0 {
 				current.Body = bytes.Clone(resp.Body)
 			}
+			h.mu.Unlock()
 		}
 	}
 	return current
@@ -389,8 +478,17 @@ func (h *Host) InterceptStreamChunkExcept(ctx context.Context, req pluginapi.Str
 		} else {
 			nextReq.HistoryChunks = cloneByteSlices(req.HistoryChunks)
 		}
-		nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		if record.observeOnly {
+			nextReq.Metadata = cloneObserverMetadata(req.Metadata)
+		} else {
+			nextReq.Metadata = cloneInterceptorMetadata(req.Metadata)
+		}
 		if resp, ok := h.callStreamChunkInterceptor(ctx, record, interceptor, nextReq); ok {
+			h.mu.Lock()
+			if !h.interceptorMutationAllowedLocked(record) {
+				h.mu.Unlock()
+				continue
+			}
 			current.Headers = mergeHeaders(current.Headers, resp.Headers, resp.ClearHeaders)
 			if len(resp.Body) > 0 {
 				current.Body = bytes.Clone(resp.Body)
@@ -398,6 +496,7 @@ func (h *Host) InterceptStreamChunkExcept(ctx context.Context, req pluginapi.Str
 			if resp.DropChunk {
 				current.DropChunk = true
 			}
+			h.mu.Unlock()
 		}
 	}
 	return current
@@ -486,6 +585,70 @@ func (h *Host) HasRequestInterceptors() bool {
 		}
 	}
 	return false
+}
+
+func (host *Host) HasUnconstrainedInterceptors() bool {
+	if host == nil {
+		return false
+	}
+	if len(host.applyMu) != 0 || host.unconstrainedInterceptorCalls.Load() != 0 {
+		return true
+	}
+	snapshot := host.Snapshot()
+	for _, record := range host.activeRecordsFromSnapshot(snapshot) {
+		caps := record.plugin.Capabilities
+		if hasAuthProviderCap(caps) || caps.FrontendAuthProvider != nil || caps.Scheduler != nil || caps.ModelRouter != nil || caps.Executor != nil || caps.ModelRegistrar != nil || caps.ModelProvider != nil || caps.RequestTranslator != nil || caps.RequestNormalizer != nil || caps.ResponseTranslator != nil || caps.ResponseBeforeTranslator != nil || caps.ResponseAfterTranslator != nil || caps.ThinkingApplier != nil || caps.UsagePlugin != nil {
+			return true
+		}
+		if record.observeOnly {
+			continue
+		}
+		if recordHasRequestInterceptor(record) || caps.ResponseInterceptor != nil || caps.StreamChunkInterceptor != nil || caps.RequestLifecyclePlugin != nil || caps.WebSocketResponseObserver != nil {
+			return true
+		}
+	}
+	return len(host.applyMu) != 0 || host.unconstrainedInterceptorCalls.Load() != 0 || host.Snapshot() != snapshot
+}
+
+func (host *Host) interceptorRecordCurrentLocked(record capabilityRecord) bool {
+	if host == nil {
+		return false
+	}
+	if _, fused := host.fused[record.id]; fused {
+		return false
+	}
+	snapshot, _ := host.snapshot.Load().(*Snapshot)
+	if snapshot == nil {
+		return false
+	}
+	for _, active := range snapshot.records {
+		if active.id == record.id && active.path == record.path && active.version == record.version && active.observeOnly == record.observeOnly {
+			return host.activePluginPaths[record.id] == cleanPluginPath(record.path) && host.activePluginVersions[record.id] == record.version && host.pluginFileVersions[cleanPluginPath(record.path)] == record.version
+		}
+	}
+	return false
+}
+
+func (host *Host) interceptorMutationAllowedLocked(record capabilityRecord) bool {
+	return !record.observeOnly && host.interceptorRecordCurrentLocked(record)
+}
+
+func (host *Host) beginInterceptorCall(record capabilityRecord) bool {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if !host.interceptorRecordCurrentLocked(record) {
+		return false
+	}
+	if !record.observeOnly {
+		host.unconstrainedInterceptorCalls.Add(1)
+	}
+	return true
+}
+
+func (host *Host) endInterceptorCall(record capabilityRecord) {
+	if !record.observeOnly {
+		host.unconstrainedInterceptorCalls.Add(-1)
+	}
 }
 
 func recordHasRequestInterceptor(record capabilityRecord) bool {
@@ -759,6 +922,60 @@ func cloneInterceptorMetadata(in map[string]any) map[string]any {
 		out[key] = cloneInterceptorMetadataAny(reflect.ValueOf(value), visited)
 	}
 	return out
+}
+
+func cloneObserverMetadata(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		if cloned, ok := cloneObserverValue(value, 0); ok {
+			out[key] = cloned
+		}
+	}
+	return out
+}
+
+func cloneObserverValue(value any, depth int) (any, bool) {
+	if depth >= 16 {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case nil:
+		return nil, true
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			if cloned, ok := cloneObserverValue(child, depth+1); ok {
+				out[key] = cloned
+			}
+		}
+		return out, true
+	case map[string]string:
+		return cloneStringMap(typed), true
+	case []any:
+		out := make([]any, len(typed))
+		for index, child := range typed {
+			cloned, ok := cloneObserverValue(child, depth+1)
+			if !ok {
+				return nil, false
+			}
+			out[index] = cloned
+		}
+		return out, true
+	case []byte:
+		return bytes.Clone(typed), true
+	case []string:
+		return append([]string(nil), typed...), true
+	}
+	kind := reflect.TypeOf(value).Kind()
+	switch kind {
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return value, true
+	default:
+		return nil, false
+	}
 }
 
 type metadataCloneVisit struct {

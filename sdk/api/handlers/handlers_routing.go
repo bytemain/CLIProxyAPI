@@ -35,6 +35,10 @@ type modelRouterSkipDetector interface {
 	HasModelRoutersExcept(string) bool
 }
 
+type unconstrainedInterceptorDetector interface {
+	HasUnconstrainedInterceptors() bool
+}
+
 func preferExecutionProvider(providers []string, preferred string) []string {
 	preferred = strings.ToLower(strings.TrimSpace(preferred))
 	if preferred == "" || len(providers) < 2 {
@@ -357,6 +361,18 @@ func modelRoutersEnabled(host PluginModelRouterHost, skipPluginID string) bool {
 	// No detector: treat routing as disabled (same conservative default as before any
 	// ModelRouter existed). Hosts that route must implement HasModelRouters (pluginhost.Host does).
 	return false
+}
+
+func (h *BaseAPIHandler) HasUnverifiedModelRouting() bool {
+	if modelRoutersEnabled(h.modelRouterHost(), "") {
+		return true
+	}
+	host := h.interceptorHost()
+	if host == nil {
+		return false
+	}
+	detector, ok := host.(unconstrainedInterceptorDetector)
+	return !ok || detector.HasUnconstrainedInterceptors()
 }
 
 func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, modelName string, rawJSON []byte, stream bool, execOptions modelExecutionOptions) modelRouteDecision {

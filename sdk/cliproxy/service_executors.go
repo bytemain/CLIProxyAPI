@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -601,14 +602,14 @@ func (s *Service) appendPluginModels(providerKey string, models []*ModelInfo, ex
 		return models
 	}
 	out := make([]*ModelInfo, 0, len(models)+len(pluginModels))
-	seen := make(map[string]struct{}, len(models)+len(pluginModels))
+	seen := make(map[string]int, len(models)+len(pluginModels))
 	for _, model := range models {
 		if model == nil {
 			continue
 		}
 		modelID := strings.TrimSpace(model.ID)
 		if modelID != "" {
-			seen[modelID] = struct{}{}
+			seen[modelID] = len(out)
 		}
 		out = append(out, model)
 	}
@@ -620,10 +621,11 @@ func (s *Service) appendPluginModels(providerKey string, models []*ModelInfo, ex
 		if modelID == "" {
 			continue
 		}
-		if _, exists := seen[modelID]; exists {
+		if index, exists := seen[modelID]; exists {
+			out[index] = registry.MergeModelListLimits(out[index], model)
 			continue
 		}
-		seen[modelID] = struct{}{}
+		seen[modelID] = len(out)
 		out = append(out, model)
 	}
 	return out
